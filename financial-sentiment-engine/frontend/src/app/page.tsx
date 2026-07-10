@@ -2,11 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { SentimentCard } from "@/components/SentimentCard";
+import { StockDetailCard } from "@/components/StockDetailCard";
+import { SearchBar } from "@/components/SearchBar";
 import { motion } from "framer-motion";
 
 export default function Home() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Phase 5: Search state
+  const [searchResult, setSearchResult] = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -33,7 +38,7 @@ export default function Home() {
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: "easeOut" }}
-          className="mb-16"
+          className="mb-12 flex flex-col items-center text-center"
         >
           <div className="inline-block px-3 py-1 mb-6 rounded-full border border-[#22262d] bg-[#16181d] text-sm text-gray-400 font-medium tracking-wide">
             Powered by Native Llama 3
@@ -41,31 +46,50 @@ export default function Home() {
           <h1 className="text-5xl md:text-6xl font-extrabold tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-500 mb-6">
             Financial Sentiment Engine
           </h1>
-          <p className="text-xl text-gray-400 max-w-2xl leading-relaxed">
-            Real-time autonomous AI analysis of your portfolio. The Python worker continuously scrapes financial data and processes it locally via Ollama.
-          </p>
+          
+          <SearchBar 
+            onSearchResult={(result) => setSearchResult(result)} 
+            onClear={() => setSearchResult(null)} 
+          />
         </motion.div>
 
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 h-64 animate-pulse">
-                <div className="h-6 bg-[#22262d] rounded w-1/2 mb-4"></div>
-                <div className="h-4 bg-[#22262d] rounded w-full mb-2"></div>
-                <div className="h-4 bg-[#22262d] rounded w-3/4 mb-10"></div>
-                <div className="flex justify-between border-t border-[#22262d] pt-4">
-                  <div className="h-8 bg-[#22262d] rounded w-16"></div>
-                  <div className="h-8 bg-[#22262d] rounded w-12"></div>
-                </div>
-              </div>
-            ))}
+        {searchResult ? (
+          <div className="flex justify-center">
+             <div className="w-full max-w-4xl">
+               <div className="flex items-center justify-between mb-6 border-b border-[#22262d] pb-2">
+                 <h2 className="text-2xl font-semibold text-emerald-400">Deep Dive Analysis</h2>
+                 <button onClick={() => setSearchResult(null)} className="text-sm text-gray-400 hover:text-white transition-colors">
+                   Close &times;
+                 </button>
+               </div>
+               <StockDetailCard data={searchResult} />
+             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {data.map((item: any, idx: number) => (
-              <SentimentCard key={item.asset_symbol} data={item} index={idx} />
-            ))}
-          </div>
+          <>
+            <h2 className="text-2xl font-semibold mb-6 border-b border-[#22262d] pb-2 text-gray-300">Live Market Pulse</h2>
+            {loading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 h-64 animate-pulse">
+                    <div className="h-6 bg-[#22262d] rounded w-1/2 mb-4"></div>
+                    <div className="h-4 bg-[#22262d] rounded w-full mb-2"></div>
+                    <div className="h-4 bg-[#22262d] rounded w-3/4 mb-10"></div>
+                    <div className="flex justify-between border-t border-[#22262d] pt-4">
+                      <div className="h-8 bg-[#22262d] rounded w-16"></div>
+                      <div className="h-8 bg-[#22262d] rounded w-12"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {data.map((item: any, idx: number) => (
+                  <SentimentCard key={item.asset_symbol} data={item} index={idx} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </main>
