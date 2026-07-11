@@ -11,7 +11,7 @@ interface SentimentData {
   created_at: string;
 }
 
-export function SentimentCard({ data, index }: { data: SentimentData, index: number }) {
+export function SentimentCard({ data, index, onClick }: { data: SentimentData, index: number, onClick?: () => void }) {
   const isBullish = data.sentiment_label.toLowerCase() === "bullish";
   const isBearish = data.sentiment_label.toLowerCase() === "bearish";
   
@@ -21,10 +21,17 @@ export function SentimentCard({ data, index }: { data: SentimentData, index: num
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: index * 0.1, type: "spring", stiffness: 100 }}
       whileHover={{ scale: 1.02, y: -5 }}
-      className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl flex flex-col justify-between h-full"
+      onClick={onClick}
+      className={`bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl flex flex-col justify-between h-full ${onClick ? "cursor-pointer" : ""}`}
     >
       <div className="flex justify-between items-start mb-4">
-        <h3 className="text-xl font-bold text-white tracking-tight">{data.asset_symbol}</h3>
+        <h3 className="text-xl font-bold text-white tracking-tight">
+          {data.asset_symbol === "^NSEI" ? "Nifty 50" :
+           data.asset_symbol === "NQ=F" ? "Nasdaq 100" :
+           data.asset_symbol === "BANKBEES.NS" ? "Bankbees ETF" :
+           data.asset_symbol === "GLD" ? "Gold" :
+           data.asset_symbol}
+        </h3>
         <div className={`p-2 rounded-full ${isBullish ? 'bg-emerald-500/10 text-emerald-400' : isBearish ? 'bg-red-500/10 text-red-400' : 'bg-gray-500/10 text-gray-400'}`}>
           {isBullish ? <TrendingUp size={24} /> : isBearish ? <TrendingDown size={24} /> : <Minus size={24} />}
         </div>

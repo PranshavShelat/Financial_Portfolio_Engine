@@ -1,7 +1,6 @@
 import time
 import schedule
-import requests
-from bs4 import BeautifulSoup
+import yfinance as yf
 import psycopg2
 import os
 import json
@@ -16,20 +15,38 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
 # Initialize Ollama client
 client = ollama.Client(host=OLLAMA_HOST)
 
-ASSETS = ["Reliance Industries", "ITC Limited", "State Bank of India", "Nasdaq 100"]
+DEFAULT_ASSETS = ["^NSEI", "NQ=F", "BANKBEES.NS", "GLD"]
 
-def scrape_news(asset):
-    """Mock scraper for demonstration purposes."""
-    logging.info(f"Scraping news for {asset}...")
-    # In a real scenario, you'd use BeautifulSoup to parse Yahoo Finance, etc.
-    # For now, we mock a headline so it works consistently.
-    headlines = {
-        "Reliance Industries": "Reliance announces record profits for Q3, expanding green energy initiatives.",
-        "ITC Limited": "ITC faces slight margin pressure due to increased taxation, but FMCG sector shows strong growth.",
-        "State Bank of India": "SBI reports massive surge in retail lending, non-performing assets at all-time low.",
-        "Nasdaq 100": "Tech stocks rally as inflation cools, leading Nasdaq 100 to new record highs."
-    }
-    return headlines.get(asset, "No news found.")
+def get_dynamic_assets():
+    assets = set(DEFAULT_ASSETS)
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT ticker FROM watchlists;")
+        rows = cur.fetchall()
+        for row in rows:
+            assets.add(row[0])
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error fetching dynamic assets: {e}")
+    return list(assets)
+
+def scrape_news(ticker):
+    """Fetch real news using yfinance."""
+    logging.info(f"Scraping news for {ticker}...")
+    try:
+        stock = yf.Ticker(ticker)
+        news = stock.news
+        if news and len(news) > 0:
+            item = news[0]
+            content = item.get('content') or {}
+            title = content.get('title') or item.get('title')
+            if title:
+                return title
+    except Exception as e:
+        logging.error(f"yfinance error for {ticker}: {e}")
+    return "No recent news found for this asset."
 
 def analyze_sentiment(asset, news_text):
     """Ask Llama 3 to analyze the sentiment of the news text."""
@@ -90,11 +107,12 @@ def save_to_db(asset, sentiment_data, news_source):
 
 def job():
     logging.info("Starting scheduled scraping job...")
-    for asset in ASSETS:
+    assets = get_dynamic_assets()
+    for asset in assets:
         news_text = scrape_news(asset)
         sentiment = analyze_sentiment(asset, news_text)
         save_to_db(asset, sentiment, news_text)
-        time.sleep(2) # Be polite between scrapes
+        time.sleep(1) # Be polite between scrapes
     logging.info("Job complete. Waiting for next cycle.")
 
 # Run once immediately, then schedule

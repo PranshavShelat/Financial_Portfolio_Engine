@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import psycopg2
@@ -9,6 +9,16 @@ import json
 import re
 import math
 from curl_cffi import requests
+from pydantic import BaseModel
+from langchain_community.document_loaders import WebBaseLoader
+from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordRequestForm
+
+from . import models, database, auth
+from .database import engine, get_db
+
+# Create the database tables
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Financial Sentiment Engine API")
 
@@ -112,6 +122,133 @@ def get_suggestions(q: str):
         print(f"Suggestion Error: {e}")
         return []
 
+class SummarizeRequest(BaseModel):
+    url: str
+
+@app.post("/api/summarize")
+def summarize_article(req: SummarizeRequest):
+    try:
+        loader = WebBaseLoader(req.url)
+        docs = loader.load()
+        if not docs:
+            raise ValueError("Could not extract text from URL.")
+        
+        # Grab first 4000 characters to prevent context window overload
+        article_text = docs[0].page_content[:4000]
+        
+        prompt = f"""
+        You are a financial analyst. Read the following article text and provide a comprehensive, 3-4 sentence summary of the key takeaways. Focus on what this means for the stock market and investors.
+
+        Article Text:
+        {article_text}
+        
+        Summary:
+        """
+        
+        response = llama_client.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
+        summary = response['message']['content'].strip()
+        
+        return {"summary": summary}
+    except Exception as e:
+        print(f"Summarize Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to summarize article.")
+
+# --- Auth Endpoints ---
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+@app.post("/api/register")
+def register_user(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = auth.get_password_hash(user.password)
+    new_user = models.User(username=user.username, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"message": "User created successfully"}
+
+@app.post("/api/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    if not user or not auth.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = auth.timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "username": user.username}
+
+# --- Watchlist Endpoints ---
+
+class WatchlistAdd(BaseModel):
+    ticker: str
+    name: str
+
+@app.get("/api/watchlist")
+def get_watchlist(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    items = []
+    for wl in current_user.watchlists:
+        price = None
+        change_percent = None
+        currency = "USD"
+        try:
+            stock = yf.Ticker(wl.ticker)
+            info = stock.info or {}
+            currency = info.get("currency", "USD")
+            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("navPrice")
+            prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+            
+            # fallback to history if info is missing prices
+            if not price or not prev_close:
+                hist = stock.history(period="5d")
+                if len(hist) >= 2:
+                    prev_close = hist['Close'].iloc[-2]
+                    price = hist['Close'].iloc[-1]
+                elif len(hist) == 1:
+                    price = hist['Close'].iloc[0]
+                    
+            if price and prev_close:
+                change_percent = ((price - prev_close) / prev_close) * 100
+        except Exception as e:
+            print(f"Error fetching price for {wl.ticker}: {e}")
+            
+        items.append({
+            "id": wl.id,
+            "ticker": wl.ticker,
+            "name": wl.name,
+            "price": price,
+            "change_percent": change_percent,
+            "currency": currency
+        })
+    return items
+
+@app.post("/api/watchlist")
+def toggle_watchlist(item: WatchlistAdd, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    existing = db.query(models.Watchlist).filter(
+        models.Watchlist.user_id == current_user.id,
+        models.Watchlist.ticker == item.ticker
+    ).first()
+    
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"message": "Removed from watchlist", "status": "removed"}
+    else:
+        new_item = models.Watchlist(user_id=current_user.id, ticker=item.ticker, name=item.name)
+        db.add(new_item)
+        db.commit()
+        return {"message": "Added to watchlist", "status": "added"}
+
 @app.get("/api/chart/{ticker}")
 def get_chart(ticker: str, period: str = "1mo"):
     try:
@@ -158,21 +295,25 @@ def search_ticker(ticker: str):
     """Fetch real-time yfinance data and live sentiment for a searched ticker."""
     try:
         stock = yf.Ticker(ticker)
-        info = stock.info
+        info = stock.info or {}
         currency = info.get("currency", "USD")
         
         # Fetch the top 6 news headlines
         news = stock.news
-        headlines = []
+        headlines_data = []
         if news:
             for item in news[:6]:
-                if 'content' in item and 'title' in item['content']:
-                    headlines.append(item['content']['title'])
-                elif 'title' in item:
-                    headlines.append(item['title'])
+                content = item.get('content') or {}
+                title = content.get('title') or item.get('title')
+                click_url = content.get('clickThroughUrl') or {}
+                url = click_url.get('url') or item.get('link')
+                if title:
+                    headlines_data.append({"title": title, "url": url or ""})
                     
-        if not headlines:
-            headlines.append(f"No recent news for {ticker}.")
+        if not headlines_data:
+            headlines_data.append({"title": f"No recent news for {ticker}.", "url": ""})
+            
+        headlines = [h['title'] for h in headlines_data]
             
         # Create a prompt for individual grading
         news_json = json.dumps(headlines)
@@ -197,13 +338,16 @@ def search_ticker(ticker: str):
             match = re.search(r'\[.*\]', result_text, re.DOTALL)
             if match:
                 sentiments = json.loads(match.group(0))
+                for i, sentiment in enumerate(sentiments):
+                    if i < len(headlines_data):
+                        sentiment['url'] = headlines_data[i]['url']
             else:
                 raise ValueError("No JSON array found")
                 
         except Exception as e:
             print(f"Llama 3 Error: {e}")
             # Fallback
-            sentiments = [{"headline": h, "sentiment_label": "neutral", "sentiment_score": 50} for h in headlines]
+            sentiments = [{"headline": h['title'], "sentiment_label": "neutral", "sentiment_score": 50, "url": h['url']} for h in headlines_data]
             
         hist = stock.history(period="1d", interval="5m")
         hist = hist.ffill().dropna(subset=['Close'])
