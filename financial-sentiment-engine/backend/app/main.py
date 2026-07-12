@@ -249,6 +249,132 @@ def toggle_watchlist(item: WatchlistAdd, current_user: models.User = Depends(aut
         db.commit()
         return {"message": "Added to watchlist", "status": "added"}
 
+# --- Portfolio Endpoints ---
+
+class PortfolioAdd(BaseModel):
+    ticker: str
+    shares: float
+    purchase_date: str
+    purchase_price: float
+
+class PortfolioValidate(BaseModel):
+    ticker: str
+    purchase_date: str
+    purchase_price: float
+
+@app.post("/api/portfolio/validate")
+def validate_portfolio_price(item: PortfolioValidate):
+    try:
+        stock = yf.Ticker(item.ticker)
+        import datetime
+        date_obj = datetime.datetime.strptime(item.purchase_date, "%Y-%m-%d")
+        next_day = date_obj + datetime.timedelta(days=1)
+        
+        hist = stock.history(start=date_obj.strftime("%Y-%m-%d"), end=next_day.strftime("%Y-%m-%d"))
+        if hist.empty:
+            return {"valid": False, "message": "No trading data found for this date."}
+            
+        row = hist.iloc[0]
+        low = row['Low']
+        high = row['High']
+        
+        if low <= item.purchase_price <= high:
+            return {"valid": True, "message": "Price is valid for this date."}
+        else:
+            return {"valid": False, "message": f"Price must be between {low:.2f} and {high:.2f} for this date."}
+    except Exception as e:
+        return {"valid": False, "message": f"Validation error: {str(e)}"}
+
+@app.post("/api/portfolio")
+def add_portfolio_item(item: PortfolioAdd, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    validation = validate_portfolio_price(PortfolioValidate(ticker=item.ticker, purchase_date=item.purchase_date, purchase_price=item.purchase_price))
+    if not validation["valid"]:
+        raise HTTPException(status_code=400, detail=validation["message"])
+        
+    stock = yf.Ticker(item.ticker)
+    info = stock.info or {}
+    name = info.get("shortName") or item.ticker
+    
+    import datetime
+    date_obj = datetime.datetime.strptime(item.purchase_date, "%Y-%m-%d").date()
+    
+    new_item = models.PortfolioItem(
+        user_id=current_user.id, 
+        ticker=item.ticker, 
+        name=name,
+        shares=item.shares,
+        purchase_date=date_obj,
+        purchase_price=item.purchase_price
+    )
+    db.add(new_item)
+    db.commit()
+    return {"message": "Added to portfolio"}
+
+@app.get("/api/portfolio")
+def get_portfolio(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    items = []
+    for p in current_user.portfolio_items:
+        price = None
+        currency = "USD"
+        try:
+            stock = yf.Ticker(p.ticker)
+            info = stock.info or {}
+            currency = info.get("currency", "USD")
+            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("navPrice")
+            
+            if not price:
+                hist = stock.history(period="1d")
+                if not hist.empty:
+                    price = hist['Close'].iloc[-1]
+        except Exception:
+            pass
+            
+        items.append({
+            "id": p.id,
+            "ticker": p.ticker,
+            "name": p.name,
+            "shares": p.shares,
+            "purchase_date": p.purchase_date.strftime("%Y-%m-%d"),
+            "purchase_price": p.purchase_price,
+            "current_price": price,
+            "currency": currency
+        })
+    return items
+
+class SellShares(BaseModel):
+    shares: float
+
+@app.post("/api/portfolio/{item_id}/sell")
+def sell_portfolio_item(item_id: int, payload: SellShares, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    item = db.query(models.PortfolioItem).filter(
+        models.PortfolioItem.id == item_id,
+        models.PortfolioItem.user_id == current_user.id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+        
+    if payload.shares > item.shares:
+        raise HTTPException(status_code=400, detail=f"You only have {item.shares} shares to remove.")
+    elif payload.shares == item.shares:
+        db.delete(item)
+    else:
+        item.shares -= payload.shares
+    
+    db.commit()
+    return {"message": "Shares updated"}
+
+@app.delete("/api/portfolio/{item_id}")
+def delete_portfolio_item(item_id: int, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    item = db.query(models.PortfolioItem).filter(
+        models.PortfolioItem.id == item_id,
+        models.PortfolioItem.user_id == current_user.id
+    ).first()
+    if item:
+        db.delete(item)
+        db.commit()
+        return {"message": "Deleted"}
+    raise HTTPException(status_code=404, detail="Item not found")
+
 @app.get("/api/chart/{ticker}")
 def get_chart(ticker: str, period: str = "1mo"):
     try:
@@ -298,57 +424,7 @@ def search_ticker(ticker: str):
         info = stock.info or {}
         currency = info.get("currency", "USD")
         
-        # Fetch the top 6 news headlines
-        news = stock.news
-        headlines_data = []
-        if news:
-            for item in news[:6]:
-                content = item.get('content') or {}
-                title = content.get('title') or item.get('title')
-                click_url = content.get('clickThroughUrl') or {}
-                url = click_url.get('url') or item.get('link')
-                if title:
-                    headlines_data.append({"title": title, "url": url or ""})
-                    
-        if not headlines_data:
-            headlines_data.append({"title": f"No recent news for {ticker}.", "url": ""})
-            
-        headlines = [h['title'] for h in headlines_data]
-            
-        # Create a prompt for individual grading
-        news_json = json.dumps(headlines)
-        prompt = f"""
-        You are a financial analyst. Analyze the following list of news headlines for the ticker: {ticker}.
-        Grade EACH headline individually. Determine if each headline is bullish, bearish, or neutral, and provide a confidence score (1-100).
-        
-        Headlines: {news_json}
-        
-        You must respond ONLY with a valid JSON array of objects, one for each headline, in this exact format:
-        [
-            {{"headline": "Headline 1 text", "sentiment_label": "bullish", "sentiment_score": 85}},
-            {{"headline": "Headline 2 text", "sentiment_label": "neutral", "sentiment_score": 50}}
-        ]
-        """
-        
-        try:
-            response = llama_client.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
-            result_text = response['message']['content'].strip()
-            
-            # Robust JSON extraction (look for an array block)
-            match = re.search(r'\[.*\]', result_text, re.DOTALL)
-            if match:
-                sentiments = json.loads(match.group(0))
-                for i, sentiment in enumerate(sentiments):
-                    if i < len(headlines_data):
-                        sentiment['url'] = headlines_data[i]['url']
-            else:
-                raise ValueError("No JSON array found")
-                
-        except Exception as e:
-            print(f"Llama 3 Error: {e}")
-            # Fallback
-            sentiments = [{"headline": h['title'], "sentiment_label": "neutral", "sentiment_score": 50, "url": h['url']} for h in headlines_data]
-            
+        chart_data = []
         hist = stock.history(period="1d", interval="5m")
         hist = hist.ffill().dropna(subset=['Close'])
         chart_data = hist.reset_index().to_dict('records')
@@ -371,9 +447,68 @@ def search_ticker(ticker: str):
             "name": info.get("shortName", ticker.upper()),
             "currency": currency,
             "current_price": current_price,
-            "sentiments": sentiments,
+            "sentiments": [],
             "chart_data": formatted_chart
         }
     except Exception as e:
         print(f"Error fetching data for {ticker}: {e}")
         raise HTTPException(status_code=404, detail="Ticker not found or failed to fetch.")
+
+@app.get("/api/search/{ticker}/sentiments")
+def search_ticker_sentiments(ticker: str):
+    """Fetch live sentiment for a searched ticker independently."""
+    try:
+        stock = yf.Ticker(ticker)
+        
+        # Fetch the top 6 news headlines
+        news = stock.news
+        headlines_data = []
+        if news:
+            for item in news[:6]:
+                content = item.get('content') or {}
+                title = content.get('title') or item.get('title')
+                click_url = content.get('clickThroughUrl') or {}
+                url = click_url.get('url') or item.get('link')
+                if title:
+                    headlines_data.append({"title": title, "url": url or ""})
+                    
+        if not headlines_data:
+            headlines_data.append({"title": f"No recent news for {ticker}.", "url": ""})
+            
+        headlines = [h['title'] for h in headlines_data]
+            
+        news_json = json.dumps(headlines)
+        prompt = f"""
+        You are a financial analyst. Analyze the following list of news headlines for the ticker: {ticker}.
+        Grade EACH headline individually. Determine if each headline is bullish, bearish, or neutral, and provide a confidence score (1-100).
+        
+        Headlines: {news_json}
+        
+        You must respond ONLY with a valid JSON array of objects, one for each headline, in this exact format:
+        [
+            {{"headline": "Headline 1 text", "sentiment_label": "bullish", "sentiment_score": 85}},
+            {{"headline": "Headline 2 text", "sentiment_label": "neutral", "sentiment_score": 50}}
+        ]
+        """
+        
+        try:
+            response = llama_client.chat(model='llama3', messages=[{'role': 'user', 'content': prompt}])
+            result_text = response['message']['content'].strip()
+            
+            match = re.search(r'\[.*\]', result_text, re.DOTALL)
+            if match:
+                sentiments = json.loads(match.group(0))
+                for i, sentiment in enumerate(sentiments):
+                    if i < len(headlines_data):
+                        sentiment['url'] = headlines_data[i]['url']
+            else:
+                raise ValueError("No JSON array found")
+                
+        except Exception as e:
+            print(f"Llama 3 Error: {e}")
+            sentiments = [{"headline": h['title'], "sentiment_label": "neutral", "sentiment_score": 50, "url": h['url']} for h in headlines_data]
+            
+        return {"sentiments": sentiments}
+    except Exception as e:
+        print(f"Error fetching sentiment for {ticker}: {e}")
+        raise HTTPException(status_code=404, detail="Failed to fetch sentiment.")

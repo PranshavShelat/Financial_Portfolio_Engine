@@ -43,6 +43,32 @@ export function StockDetailCard({ data, token, isWatchlisted, onWatchlistChange 
   const [selectedArticle, setSelectedArticle] = useState<{headline: string, url: string} | null>(null);
   const [articleSummary, setArticleSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  
+  // Independent Sentiment State
+  const [sentiments, setSentiments] = useState(data.sentiments || []);
+  const [sentimentLoading, setSentimentLoading] = useState(!data.sentiments || data.sentiments.length === 0);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchSentiments = async () => {
+      setSentiments([]); // Clear old sentiments
+      setSentimentLoading(true);
+      try {
+        const res = await fetch(`http://localhost:8000/api/search/${data.symbol}/sentiments`);
+        if (res.ok) {
+          const json = await res.json();
+          if (isMounted) setSentiments(json.sentiments);
+        }
+      } catch (e) {
+        console.error("Failed to fetch sentiment", e);
+      } finally {
+        if (isMounted) setSentimentLoading(false);
+      }
+    };
+    fetchSentiments();
+    
+    return () => { isMounted = false; };
+  }, [data.symbol]);
 
   useEffect(() => {
     // Initial fetch from data payload is for 1d, don't refetch if already 1d on mount
@@ -111,14 +137,18 @@ export function StockDetailCard({ data, token, isWatchlisted, onWatchlistChange 
     }
   };
 
-  // Determine overall sentiment trend based on average score of the items
-  const avgScore = data.sentiments.reduce((acc, curr) => acc + curr.sentiment_score, 0) / (data.sentiments.length || 1);
-  const overallTrend = avgScore >= 60 ? "bullish" : avgScore <= 40 ? "bearish" : "neutral";
-  const mainColor = overallTrend === "bullish" ? "#10b981" : overallTrend === "bearish" ? "#ef4444" : "#6b7280";
-
   const firstPrice = chartData.length > 0 ? chartData[0].Close : 0;
   const lastPrice = chartData.length > 0 ? chartData[chartData.length - 1].Close : data.current_price;
   const percentChange = firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : 0;
+
+  // Determine overall sentiment trend based on average score of the items
+  const avgScore = sentiments.length > 0 
+    ? sentiments.reduce((acc, curr) => acc + curr.sentiment_score, 0) / sentiments.length 
+    : 50;
+  const overallTrend = avgScore >= 60 ? "bullish" : avgScore <= 40 ? "bearish" : "neutral";
+  
+  // Graph color based on percentChange
+  const mainColor = percentChange > 0 ? "#10b981" : percentChange < 0 ? "#ef4444" : "#6b7280";
   
   const formatXAxis = (tickItem: string) => {
     if (!tickItem) return "";
@@ -226,34 +256,41 @@ export function StockDetailCard({ data, token, isWatchlisted, onWatchlistChange 
 
         <div className="p-8 border-t border-[#22262d] bg-black/20">
           <h3 className="text-xl font-bold text-white mb-6">AI Sentiment Breakdown</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {data.sentiments.map((item, idx) => {
-              const isItemBullish = item.sentiment_label.toLowerCase() === "bullish";
-              const isItemBearish = item.sentiment_label.toLowerCase() === "bearish";
-              const hasUrl = !!item.url;
-              return (
-                <div 
-                  key={idx} 
-                  onClick={() => hasUrl && handleArticleClick(item.headline, item.url)}
-                  className={`bg-[#16181d] border border-[#22262d] p-4 rounded-2xl flex flex-col justify-between transition-colors ${hasUrl ? 'cursor-pointer hover:border-gray-400' : ''}`}
-                >
-                  <p className="text-sm text-gray-300 leading-relaxed mb-4 line-clamp-3">"{item.headline}"</p>
-                  <div className="flex items-center justify-between mt-auto">
-                    <div className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider ${isItemBullish ? 'text-emerald-400' : isItemBearish ? 'text-red-400' : 'text-gray-400'}`}>
-                      {isItemBullish ? <TrendingUp size={16} /> : isItemBearish ? <TrendingDown size={16} /> : <Minus size={16} />}
-                      {item.sentiment_label}
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {hasUrl && <div className="text-xs text-gray-500 font-medium tracking-wide border border-gray-700 px-2 py-1 rounded-md bg-gray-800/50 flex items-center gap-1"><ExternalLink size={12}/> SUMMARY</div>}
-                      <div className={`text-xl font-extrabold ${isItemBullish ? 'text-emerald-400' : isItemBearish ? 'text-red-400' : 'text-gray-400'}`}>
-                        {item.sentiment_score}
+          {sentimentLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="animate-spin text-emerald-500 mb-4" size={40} />
+              <p className="text-gray-400 font-medium tracking-wide animate-pulse">Analyzing latest market sentiment...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {sentiments.map((item, idx) => {
+                const isItemBullish = item.sentiment_label.toLowerCase() === "bullish";
+                const isItemBearish = item.sentiment_label.toLowerCase() === "bearish";
+                const hasUrl = !!item.url;
+                return (
+                  <div 
+                    key={idx} 
+                    onClick={() => hasUrl && handleArticleClick(item.headline, item.url)}
+                    className={`bg-[#16181d] border border-[#22262d] p-4 rounded-2xl flex flex-col justify-between transition-colors ${hasUrl ? 'cursor-pointer hover:border-gray-400' : ''}`}
+                  >
+                    <p className="text-sm text-gray-300 leading-relaxed mb-4 line-clamp-3">"{item.headline}"</p>
+                    <div className="flex items-center justify-between mt-auto">
+                      <div className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider ${isItemBullish ? 'text-emerald-400' : isItemBearish ? 'text-red-400' : 'text-gray-400'}`}>
+                        {isItemBullish ? <TrendingUp size={16} /> : isItemBearish ? <TrendingDown size={16} /> : <Minus size={16} />}
+                        {item.sentiment_label}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {hasUrl && <div className="text-xs text-gray-500 font-medium tracking-wide border border-gray-700 px-2 py-1 rounded-md bg-gray-800/50 flex items-center gap-1"><ExternalLink size={12}/> SUMMARY</div>}
+                        <div className={`text-xl font-extrabold ${isItemBullish ? 'text-emerald-400' : isItemBearish ? 'text-red-400' : 'text-gray-400'}`}>
+                          {item.sentiment_score}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </motion.div>
 

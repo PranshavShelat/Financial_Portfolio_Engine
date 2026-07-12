@@ -6,7 +6,9 @@ import { StockDetailCard } from "@/components/StockDetailCard";
 import { SearchBar } from "@/components/SearchBar";
 import { AuthModal } from "@/components/AuthModal";
 import { motion } from "framer-motion";
-import { Star, UserCircle, LogOut } from "lucide-react";
+import { Star, UserCircle, LogOut, ChevronRight, ChevronLeft } from "lucide-react";
+import Link from "next/link";
+import { useRef } from "react";
 
 export default function Home() {
   const [data, setData] = useState([]);
@@ -20,6 +22,15 @@ export default function Home() {
   const [username, setUsername] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [watchlist, setWatchlist] = useState<any[]>([]);
+  
+  const carouselRef = useRef<HTMLDivElement>(null);
+  
+  const scrollCarousel = (direction: 'left' | 'right') => {
+    if (carouselRef.current) {
+      const scrollAmount = carouselRef.current.clientWidth;
+      carouselRef.current.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
+    }
+  };
 
   useEffect(() => {
     // Check local storage for token on mount
@@ -108,6 +119,9 @@ export default function Home() {
         <div>
           {token ? (
             <div className="flex items-center gap-4">
+              <Link href="/portfolio" className="text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg transition-colors">
+                My Portfolio
+              </Link>
               <span className="text-sm text-gray-400 font-medium flex items-center gap-1"><UserCircle size={16}/> {username}</span>
               <button onClick={handleLogout} className="text-sm font-bold text-red-400 hover:text-red-300 transition-colors flex items-center gap-1">
                 <LogOut size={16} /> Logout
@@ -160,16 +174,33 @@ export default function Home() {
           ) : (
             <div className="space-y-12">
               {token && watchlist.length > 0 && (
-                <div>
-                  <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2"><Star className="text-yellow-500" fill="currentColor"/> My Watchlist</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="relative group">
+                  <Link href="/watchlist" className="inline-flex items-center gap-2 mb-6 hover:opacity-80 transition-opacity">
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                      <Star className="text-yellow-500" fill="currentColor"/> My Watchlist
+                    </h2>
+                    <ChevronRight className="text-gray-400" />
+                  </Link>
+                  
+                  {watchlist.length > 4 && (
+                    <>
+                      <button onClick={() => scrollCarousel('left')} className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 bg-[#22262d] text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
+                        <ChevronLeft size={24} />
+                      </button>
+                      <button onClick={() => scrollCarousel('right')} className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 bg-[#22262d] text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
+                        <ChevronRight size={24} />
+                      </button>
+                    </>
+                  )}
+                  
+                  <div ref={carouselRef} className="flex gap-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide pb-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                     {watchlist.map((item, idx) => {
                       const isUp = item.change_percent > 0;
                       const isDown = item.change_percent < 0;
                       const color = isUp ? "text-emerald-400" : isDown ? "text-red-400" : "text-gray-400";
                       const sign = isUp ? "+" : "";
                       return (
-                        <div key={idx} onClick={() => handleCardClick(item.ticker)} className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 relative overflow-hidden shadow-lg hover:border-gray-500 transition-colors cursor-pointer flex flex-col h-full">
+                        <div key={idx} onClick={() => handleCardClick(item.ticker)} className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 relative overflow-hidden shadow-lg hover:border-gray-500 transition-colors cursor-pointer flex flex-col min-w-[280px] md:min-w-[320px] snap-start h-full">
                           <div className="text-sm font-bold text-gray-400 mb-1">{item.ticker}</div>
                           <h3 className="text-xl font-extrabold text-white">{item.name}</h3>
                           
