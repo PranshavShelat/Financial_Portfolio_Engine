@@ -25,7 +25,7 @@ app = FastAPI(title="Financial Sentiment Engine API")
 # Allow the Next.js frontend running locally to fetch data
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -512,3 +512,40 @@ def search_ticker_sentiments(ticker: str):
     except Exception as e:
         print(f"Error fetching sentiment for {ticker}: {e}")
         raise HTTPException(status_code=404, detail="Failed to fetch sentiment.")
+
+# --- RAG Endpoints ---
+
+from fastapi import File, UploadFile
+from . import rag
+
+@app.post("/api/rag/ingest/manual")
+async def rag_ingest_manual(file: UploadFile = File(...), ticker: str = None):
+    try:
+        result = await rag.ingest_pdf(file, ticker)
+        return result
+    except Exception as e:
+        print(f"Error ingesting PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/rag/ingest/auto/{ticker}")
+async def rag_ingest_auto(ticker: str):
+    try:
+        result = await rag.ingest_sec_filing(ticker)
+        return result
+    except Exception as e:
+        print(f"Error auto-ingesting for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RAGQuery(BaseModel):
+    query: str
+    ticker: str = None
+
+@app.post("/api/rag/query")
+def rag_query(payload: RAGQuery):
+    try:
+        result = rag.query_documents(payload.query, payload.ticker)
+        return result
+    except Exception as e:
+        print(f"Error querying RAG: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
