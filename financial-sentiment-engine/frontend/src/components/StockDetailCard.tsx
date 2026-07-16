@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { TrendingUp, TrendingDown, Minus, Loader2, X, ExternalLink } from "lucide-react";
+import { RagSection } from "./RagSection";
 
 interface StockDetailCardProps {
   data: {
@@ -292,6 +293,9 @@ export function StockDetailCard({ data, token, isWatchlisted, onWatchlistChange 
             </div>
           )}
         </div>
+
+        {/* --- RAG SECTION (Deep Document Insights) --- */}
+        <RagSection ticker={data.symbol} />
       </motion.div>
 
       {/* Article Summary Modal */}

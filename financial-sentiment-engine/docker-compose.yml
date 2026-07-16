@@ -29,6 +29,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - GEMINI_API=${GEMINI_API}
     depends_on:
       - postgres
       - redis
@@ -43,6 +44,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - GEMINI_API=${GEMINI_API}
     depends_on:
       - postgres
       - redis
