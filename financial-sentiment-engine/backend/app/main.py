@@ -527,14 +527,29 @@ async def rag_ingest_manual(file: UploadFile = File(...), ticker: str = None):
         print(f"Error ingesting PDF: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/rag/ingest/auto/{ticker}")
-async def rag_ingest_auto(ticker: str):
-    try:
-        result = await rag.ingest_sec_filing(ticker)
-        return result
-    except Exception as e:
-        print(f"Error auto-ingesting for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/rag/ingest/auto/us/{ticker}")
+async def rag_ingest_auto_us(ticker: str):
+    generator = await rag.auto_ingest_us_stream(ticker)
+    
+    async def sse_format():
+        async for chunk in generator():
+            data_str = chunk.get("data", "")
+            yield f"data: {data_str}\n\n"
+            
+    return StreamingResponse(sse_format(), media_type="text/event-stream")
+
+@app.get("/api/rag/ingest/auto/india/{ticker}")
+async def rag_ingest_auto_india(ticker: str):
+    generator = await rag.auto_ingest_india_stream(ticker)
+    
+    async def sse_format():
+        async for chunk in generator():
+            data_str = chunk.get("data", "")
+            yield f"data: {data_str}\n\n"
+            
+    return StreamingResponse(sse_format(), media_type="text/event-stream")
 
 class RAGQuery(BaseModel):
     query: str
