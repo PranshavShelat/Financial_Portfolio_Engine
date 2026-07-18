@@ -98,6 +98,12 @@ def save_to_db(asset, sentiment_data, news_source):
             news_source
         ))
         
+        # Automatically delete logs older than 10 minutes to prevent database bloat
+        cur.execute("""
+            DELETE FROM sentiment_logs 
+            WHERE created_at < NOW() - INTERVAL '10 minutes';
+        """)
+        
         conn.commit()
         cur.close()
         conn.close()

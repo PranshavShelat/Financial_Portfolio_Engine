@@ -40,6 +40,67 @@ try:
 except Exception as e:
     print(f"Could not init Ollama client: {e}")
 
+redis_client = None
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(REDIS_URL)
+        redis_client.ping()
+    except Exception as e:
+        print(f"Could not connect to Redis globally: {e}")
+
+def get_cached_stock_data(ticker: str):
+    """Fetch stock info, caching in Redis for 60 seconds if available."""
+    cache_key = f"stock_data:{ticker}"
+    
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            print(f"Redis get error: {e}")
+            
+    price = None
+    prev_close = None
+    currency = "USD"
+    name = ticker
+    
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info or {}
+        currency = info.get("currency", "USD")
+        name = info.get("shortName") or info.get("longName") or ticker
+        price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("navPrice")
+        prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        
+        if not price or not prev_close:
+            hist = stock.history(period="5d")
+            if len(hist) >= 2:
+                if not prev_close:
+                    prev_close = float(hist['Close'].iloc[-2])
+                if not price:
+                    price = float(hist['Close'].iloc[-1])
+            elif len(hist) == 1:
+                if not price:
+                    price = float(hist['Close'].iloc[0])
+    except Exception as e:
+        print(f"yfinance error for {ticker}: {e}")
+        
+    data = {
+        "price": price,
+        "prev_close": prev_close,
+        "currency": currency,
+        "name": name
+    }
+    
+    if redis_client and price is not None:
+        try:
+            redis_client.setex(cache_key, 60, json.dumps(data))
+        except Exception as e:
+            print(f"Redis set error: {e}")
+            
+    return data
+
 @app.get("/health")
 def health_check():
     health_status = {"status": "ok", "db": "disconnected", "redis": "disconnected"}
@@ -53,9 +114,8 @@ def health_check():
         print(f"DB Error: {e}")
         
     try:
-        if REDIS_URL:
-            r = redis.from_url(REDIS_URL)
-            r.ping()
+        if redis_client:
+            redis_client.ping()
             health_status["redis"] = "connected"
     except Exception as e:
         print(f"Redis Error: {e}")
@@ -198,29 +258,15 @@ class WatchlistAdd(BaseModel):
 def get_watchlist(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     items = []
     for wl in current_user.watchlists:
-        price = None
         change_percent = None
-        currency = "USD"
-        try:
-            stock = yf.Ticker(wl.ticker)
-            info = stock.info or {}
-            currency = info.get("currency", "USD")
-            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("navPrice")
-            prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
-            
-            # fallback to history if info is missing prices
-            if not price or not prev_close:
-                hist = stock.history(period="5d")
-                if len(hist) >= 2:
-                    prev_close = hist['Close'].iloc[-2]
-                    price = hist['Close'].iloc[-1]
-                elif len(hist) == 1:
-                    price = hist['Close'].iloc[0]
-                    
-            if price and prev_close:
-                change_percent = ((price - prev_close) / prev_close) * 100
-        except Exception as e:
-            print(f"Error fetching price for {wl.ticker}: {e}")
+        
+        data = get_cached_stock_data(wl.ticker)
+        price = data["price"]
+        prev_close = data["prev_close"]
+        currency = data["currency"]
+        
+        if price and prev_close:
+            change_percent = ((price - prev_close) / prev_close) * 100
             
         items.append({
             "id": wl.id,
@@ -314,28 +360,7 @@ def add_portfolio_item(item: PortfolioAdd, current_user: models.User = Depends(a
 def get_portfolio(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     items = []
     for p in current_user.portfolio_items:
-        price = None
-        previous_close = None
-        currency = "USD"
-        try:
-            stock = yf.Ticker(p.ticker)
-            info = stock.info or {}
-            currency = info.get("currency", "USD")
-            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("navPrice")
-            previous_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
-            
-            if not price or not previous_close:
-                hist = stock.history(period="5d")
-                if len(hist) >= 2:
-                    if not previous_close:
-                        previous_close = float(hist['Close'].iloc[-2])
-                    if not price:
-                        price = float(hist['Close'].iloc[-1])
-                elif len(hist) == 1:
-                    if not price:
-                        price = float(hist['Close'].iloc[0])
-        except Exception:
-            pass
+        data = get_cached_stock_data(p.ticker)
             
         items.append({
             "id": p.id,
@@ -344,9 +369,9 @@ def get_portfolio(current_user: models.User = Depends(auth.get_current_user), db
             "shares": p.shares,
             "purchase_date": p.purchase_date.strftime("%Y-%m-%d"),
             "purchase_price": p.purchase_price,
-            "current_price": price,
-            "previous_close": previous_close,
-            "currency": currency
+            "current_price": data["price"],
+            "previous_close": data["prev_close"],
+            "currency": data["currency"]
         })
     return items
 
