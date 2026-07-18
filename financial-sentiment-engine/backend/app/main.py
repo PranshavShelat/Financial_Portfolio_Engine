@@ -315,17 +315,25 @@ def get_portfolio(current_user: models.User = Depends(auth.get_current_user), db
     items = []
     for p in current_user.portfolio_items:
         price = None
+        previous_close = None
         currency = "USD"
         try:
             stock = yf.Ticker(p.ticker)
             info = stock.info or {}
             currency = info.get("currency", "USD")
             price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("navPrice")
+            previous_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
             
-            if not price:
-                hist = stock.history(period="1d")
-                if not hist.empty:
-                    price = hist['Close'].iloc[-1]
+            if not price or not previous_close:
+                hist = stock.history(period="5d")
+                if len(hist) >= 2:
+                    if not previous_close:
+                        previous_close = float(hist['Close'].iloc[-2])
+                    if not price:
+                        price = float(hist['Close'].iloc[-1])
+                elif len(hist) == 1:
+                    if not price:
+                        price = float(hist['Close'].iloc[0])
         except Exception:
             pass
             
@@ -337,6 +345,7 @@ def get_portfolio(current_user: models.User = Depends(auth.get_current_user), db
             "purchase_date": p.purchase_date.strftime("%Y-%m-%d"),
             "purchase_price": p.purchase_price,
             "current_price": price,
+            "previous_close": previous_close,
             "currency": currency
         })
     return items

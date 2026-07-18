@@ -209,7 +209,7 @@ export default function PortfolioPage() {
         <h1 className="text-4xl font-bold text-white mb-8">My Portfolio</h1>
 
         {Object.keys(groupedPortfolio).length === 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
             <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl">
               <div className="text-gray-400 text-sm font-bold mb-2">Total Value</div>
               <div className="text-3xl font-extrabold text-white">$0.00</div>
@@ -219,46 +219,74 @@ export default function PortfolioPage() {
               <div className="text-3xl font-extrabold text-white">$0.00</div>
             </div>
             <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl">
-              <div className="text-gray-400 text-sm font-bold mb-2">Total P&L</div>
-              <div className={`text-3xl font-extrabold flex items-center gap-2 text-gray-400`}>
-                $0.00
-              </div>
+              <div className="text-gray-400 text-sm font-bold mb-2">Total Gain</div>
+              <div className="text-3xl font-extrabold text-gray-400">$0.00</div>
+            </div>
+            <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl">
+              <div className="text-gray-400 text-sm font-bold mb-2">Today&apos;s Gain</div>
+              <div className="text-3xl font-extrabold text-gray-400">$0.00</div>
             </div>
           </div>
         )}
 
         {Object.keys(groupedPortfolio).map(currency => {
           const items = groupedPortfolio[currency];
-          const totalInvested = items.reduce((sum, item) => sum + (item.shares * item.purchase_price), 0);
-          const totalValue = items.reduce((sum, item) => sum + (item.shares * (item.current_price || item.purchase_price)), 0);
+          const totalInvested = items.reduce((sum: number, item: any) => sum + (item.shares * item.purchase_price), 0);
+          const totalValue = items.reduce((sum: number, item: any) => sum + (item.shares * (item.current_price || item.purchase_price)), 0);
           const totalPnL = totalValue - totalInvested;
           const totalPnLPercent = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0;
           
+          // Today's gain: (current_price - previous_close) * shares for each item
+          const todayGain = items.reduce((sum: number, item: any) => {
+            const current = item.current_price || 0;
+            const prevClose = item.previous_close || current;
+            return sum + ((current - prevClose) * item.shares);
+          }, 0);
+          const prevDayValue = items.reduce((sum: number, item: any) => {
+            const prevClose = item.previous_close || item.current_price || item.purchase_price;
+            return sum + (prevClose * item.shares);
+          }, 0);
+          const todayGainPercent = prevDayValue > 0 ? (todayGain / prevDayValue) * 100 : 0;
+
           const isUp = totalPnL > 0;
           const isDown = totalPnL < 0;
           const color = isUp ? "text-emerald-400" : isDown ? "text-red-400" : "text-gray-400";
           const sign = isUp ? "+" : "";
+
+          const todayUp = todayGain > 0;
+          const todayDown = todayGain < 0;
+          const todayColor = todayUp ? "text-emerald-400" : todayDown ? "text-red-400" : "text-gray-400";
+          const todaySign = todayUp ? "+" : "";
 
           return (
             <div key={currency} className="mb-12">
               {Object.keys(groupedPortfolio).length > 1 && (
                 <h2 className="text-xl font-bold text-gray-400 mb-4">{currency} Holdings</h2>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl">
-                  <div className="text-gray-400 text-sm font-bold mb-2">Total Value</div>
-                  <div className="text-3xl font-extrabold text-white">{formatCurrency(totalValue, currency)}</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-5 shadow-xl">
+                  <div className="text-gray-400 text-xs font-bold mb-2">Total Value</div>
+                  <div className="text-2xl font-extrabold text-white">{formatCurrency(totalValue, currency)}</div>
                 </div>
-                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl">
-                  <div className="text-gray-400 text-sm font-bold mb-2">Total Invested</div>
-                  <div className="text-3xl font-extrabold text-white">{formatCurrency(totalInvested, currency)}</div>
+                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-5 shadow-xl">
+                  <div className="text-gray-400 text-xs font-bold mb-2">Total Invested</div>
+                  <div className="text-2xl font-extrabold text-white">{formatCurrency(totalInvested, currency)}</div>
                 </div>
-                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-6 shadow-xl">
-                  <div className="text-gray-400 text-sm font-bold mb-2">Total P&L</div>
-                  <div className={`text-3xl font-extrabold flex items-center gap-2 ${color}`}>
-                    {sign}{formatCurrency(Math.abs(totalPnL), currency)}
-                    <span className="text-sm px-2 py-1 bg-gray-800/50 rounded-full">
+                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-5 shadow-xl">
+                  <div className="text-gray-400 text-xs font-bold mb-2">Total Gain</div>
+                  <div className={`text-xl font-extrabold flex items-center gap-2 flex-nowrap ${color}`}>
+                    <span className="whitespace-nowrap">{sign}{formatCurrency(Math.abs(totalPnL), currency)}</span>
+                    <span className="text-xs px-1.5 py-0.5 bg-gray-800/50 rounded-full whitespace-nowrap">
                       {sign}{totalPnLPercent.toFixed(2)}%
+                    </span>
+                  </div>
+                </div>
+                <div className="bg-[#16181d] border border-[#22262d] rounded-2xl p-5 shadow-xl">
+                  <div className="text-gray-400 text-xs font-bold mb-2">Today&apos;s Gain</div>
+                  <div className={`text-xl font-extrabold flex items-center gap-2 flex-nowrap ${todayColor}`}>
+                    <span className="whitespace-nowrap">{todaySign}{formatCurrency(Math.abs(todayGain), currency)}</span>
+                    <span className="text-xs px-1.5 py-0.5 bg-gray-800/50 rounded-full whitespace-nowrap">
+                      {todaySign}{todayGainPercent.toFixed(2)}%
                     </span>
                   </div>
                 </div>
