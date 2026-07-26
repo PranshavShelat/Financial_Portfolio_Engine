@@ -223,15 +223,16 @@ def query_documents(query_str: str, ticker: Optional[str] = None):
         "---------------------\n"
         "{context_str}\n"
         "---------------------\n"
-        "Given the context information and your own prior knowledge as an expert financial analyst, answer the query.\n"
+        "You are an expert financial analyst. Answer the query based on the context, BUT you MUST also use your own prior knowledge to answer it fully.\n"
+        "CRITICAL INSTRUCTION: Never refuse to answer. If the context lacks information, simply say so in the context section, but STILL answer the question using your own knowledge.\n\n"
         "FORMATTING RULES:\n"
         "You MUST structure your response EXACTLY in this format, and nothing else:\n\n"
         "From the provided context:\n"
-        "1. [Full sentence explaining a point from the text]\n"
+        "1. [Full sentence explaining a point from the text, or stating no relevant info was found]\n"
         "2. [Full sentence explaining another point from the text]\n"
         "3. [Full sentence explaining a third point from the text]\n\n"
         "From my own understanding and research:\n"
-        "1. [Full sentence providing your own expert insight/prediction/price target]\n"
+        "1. [Full sentence providing your own expert insight/prediction/price target/recommendation]\n"
         "2. [Full sentence providing another expert insight]\n"
         "3. [Full sentence providing a final expert insight]\n\n"
         "Do NOT use markdown bolding (**), italics, or any asterisks. Keep the text easily readable and informative.\n"
@@ -243,7 +244,8 @@ def query_documents(query_str: str, ticker: Optional[str] = None):
     # Setup query engine with citations
     query_engine = index.as_query_engine(
         similarity_top_k=3,
-        response_mode="compact",
+        response_mode="tree_summarize",
+        summary_template=qa_prompt_tmpl,
         text_qa_template=qa_prompt_tmpl
     )
     
